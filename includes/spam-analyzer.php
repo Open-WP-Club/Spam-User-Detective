@@ -18,7 +18,7 @@ class SpamDetective_Analyzer
     '/^[a-z]+\d+$/',    // Letters followed by numbers
     '/^\w+\-\d+$/',     // Word-number pattern like "wispaky-6855"
     '/^[bcdfghjklmnpqrstvwxyz]{4,8}[aeiou]{1,3}[bcdfghjklmnpqrstvwxyz]{2,6}$/', // Consonant-vowel-consonant patterns
-    '/^[a-z]{1,3}(\.[a-z]{1,3}){3,}$/', // Multiple dots pattern like "sp.am.ple"
+    '/^[a-z]{1,3}(\.[a-z]{1,3}){3,}$/', // Multiple dots pattern like "ja.me.sw.o.o.ds.ii.ii.v"
     '/^[a-z]+(\.[a-z]+){2,}$/', // General multiple dots pattern
   ];
 
@@ -34,6 +34,7 @@ class SpamDetective_Analyzer
     add_action('wp_ajax_export_suspicious_users', [$this, 'ajax_export_suspicious_users']);
     add_action('wp_ajax_export_domain_lists', [$this, 'ajax_export_domain_lists']);
     add_action('wp_ajax_import_domain_lists', [$this, 'ajax_import_domain_lists']);
+    add_action('wp_ajax_get_domain_list', [$this, 'ajax_get_domain_list']);
   }
 
   public function ajax_analyze_spam_users()
@@ -552,6 +553,34 @@ class SpamDetective_Analyzer
     }
 
     wp_send_json_success();
+  }
+
+  /**
+   * Get domain list for refreshing UI
+   */
+  public function ajax_get_domain_list()
+  {
+    check_ajax_referer('spam_detective_nonce', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+      wp_die('Insufficient permissions');
+    }
+
+    $list_type = sanitize_text_field($_POST['list_type'] ?? '');
+
+    if ($list_type === 'whitelist') {
+      $domains = get_option('spam_detective_whitelist', []);
+    } elseif ($list_type === 'suspicious') {
+      $domains = get_option('spam_detective_suspicious_domains', []);
+    } else {
+      wp_send_json_error('Invalid list type');
+      return;
+    }
+
+    // Ensure domains are lowercase for consistency
+    $domains = array_map('strtolower', array_map('trim', $domains));
+
+    wp_send_json_success($domains);
   }
 
   /**

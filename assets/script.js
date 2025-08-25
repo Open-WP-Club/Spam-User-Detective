@@ -361,33 +361,65 @@ jQuery(document).ready(function($) {
     // Domain Management
     $(document).on('click', '.whitelist-domain', function() {
         const domain = $(this).data('domain');
-        manageDomain('whitelist', 'add', domain);
+        manageDomain('whitelist', 'add', domain, null, null);
     });
     
     $('#add-whitelist').click(function() {
-        const domain = $('#new-whitelist-domain').val().trim();
+        const domain = $('#new-whitelist-domain').val().trim().toLowerCase();
         if (domain) {
-            manageDomain('whitelist', 'add', domain);
+            // Basic domain validation
+            if (!isValidDomain(domain)) {
+                alert('Please enter a valid domain name (e.g., example.com)');
+                return;
+            }
+            
+            $(this).prop('disabled', true).text('Adding...');
+            
+            manageDomain('whitelist', 'add', domain, null, $(this));
             $('#new-whitelist-domain').val('');
+        } else {
+            alert('Please enter a domain name');
         }
     });
     
     $('#add-suspicious').click(function() {
-        const domain = $('#new-suspicious-domain').val().trim();
+        const domain = $('#new-suspicious-domain').val().trim().toLowerCase();
         if (domain) {
-            manageDomain('suspicious', 'add', domain);
+            // Basic domain validation
+            if (!isValidDomain(domain)) {
+                alert('Please enter a valid domain name (e.g., example.com)');
+                return;
+            }
+            
+            $(this).prop('disabled', true).text('Adding...');
+            
+            manageDomain('suspicious', 'add', domain, null, $(this));
             $('#new-suspicious-domain').val('');
+        } else {
+            alert('Please enter a domain name');
         }
     });
     
     $(document).on('click', '.remove-domain', function() {
-        const domain = $(this).data('domain');
+        const domain = $(this).data('domain').toLowerCase();
         const type = $(this).data('type');
-        manageDomain(type, 'remove', domain);
+        const $domainTag = $(this).closest('.domain-tag');
+        
+        // Show visual feedback immediately
+        $domainTag.css('opacity', '0.5');
+        
+        manageDomain(type, 'remove', domain, $domainTag, null);
     });
     
-    function manageDomain(listType, actionType, domain) {
+    function manageDomain(listType, actionType, domain, $domainElement = null, $button = null) {
         const ajaxAction = listType === 'whitelist' ? 'whitelist_domain' : 'manage_suspicious_domains';
+        
+        console.log('Managing domain:', {
+            listType: listType,
+            actionType: actionType, 
+            domain: domain,
+            ajaxAction: ajaxAction
+        });
         
         $.ajax({
             url: spamDetective.ajaxUrl,
@@ -399,32 +431,171 @@ jQuery(document).ready(function($) {
                 nonce: spamDetective.nonce
             },
             success: function(response) {
+                console.log('Domain management response:', response);
+                
                 if (response.success) {
-                    updateDomainList(listType, actionType, domain);
+                    if (actionType === 'remove' && $domainElement) {
+                        // If we have the element reference, remove it directly
+                        $domainElement.fadeOut(300, function() {
+                            $(this).remove();
+                        });
+                    } else if (actionType === 'add') {
+                        // For add operations, try UI update first, then fallback to refresh
+                        updateDomainList(listType, actionType, domain);
+                        
+                        // Fallback: refresh the entire domain section after a delay
+                        setTimeout(function() {
+                            refreshDomainSection(listType);
+                        }, 500);
+                    }
                 } else {
+                    // Restore opacity on error
+                    if ($domainElement) {
+                        $domainElement.css('opacity', '1');
+                    }
                     alert('Error managing domain: ' + response.data);
                 }
+                
+                // Restore button state
+                if ($button && actionType === 'add') {
+                    $button.prop('disabled', false).text('Add');
+                }
             },
-            error: function() {
+            error: function(xhr, status, error) {
+                console.error('AJAX error:', {xhr: xhr, status: status, error: error});
+                
+                // Restore opacity on error
+                if ($domainElement) {
+                    $domainElement.css('opacity', '1');
+                }
+                
+                // Restore button state
+                if ($button && actionType === 'add') {
+                    $button.prop('disabled', false).text('Add');
+                }
+                
                 alert('An error occurred while managing the domain. Please try again.');
             }
         });
+    }
+    
+    // Refresh domain section by fetching current domains from server
+    function refreshDomainSection(listType) {
+        const containerId = listType === 'whitelist' ? '#whitelisted-domains' : '#suspicious-domains';
+        const optionName = listType === 'whitelist' ? 'spam_detective_whitelist' : 'spam_detective_suspicious_domains';
+        
+        console.log('Refreshing domain section for:', listType);
+        
+        // Get current domains from server
+        $.ajax({
+            url: spamDetective.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'get_domain_list',
+                list_type: listType,
+                nonce: spamDetective.nonce
+            },
+            success: function(response) {
+                if (response.success && response.data) {
+                    renderDomainList(listType, response.data);
+                }
+            },
+            error: function() {
+                console.log('Failed to refresh domain section, using DOM update');
+            }
+        });
+    }
+    
+    // Render complete domain list
+    function renderDomainList(listType, domains) {
+        const containerId = listType === 'whitelist' ? '#whitelisted-domains' : '#suspicious-domains';
+        const tagClass = listType === 'whitelist' ? 'whitelist-tag' : 'suspicious-tag';
+        const $container = $(containerId);
+        
+        console.log('Rendering domain list:', {listType, domains, containerId});
+        
+        // Clear existing content
+        $container.empty();
+        
+        // Add each domain
+        domains.forEach(function(domain) {
+            const tagHtml = `<span class="domain-tag ${tagClass}">${escapeHtml(domain)} <button class="remove-domain" data-domain="${escapeHtml(domain.toLowerCase())}" data-type="${listType}">×</button></span>`;
+            $container.append(tagHtml);
+        });
+        
+        console.log('Domain list rendered, container now has', domains.length, 'domains');
+    }
+    
+    // Simple domain validation function
+    function isValidDomain(domain) {
+        // Basic domain regex - allows domains like example.com, sub.example.com, etc.
+        const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.([a-zA-Z]{2,}\.)*[a-zA-Z]{2,}$/;
+        return domainRegex.test(domain);
     }
     
     function updateDomainList(listType, actionType, domain) {
         const containerId = listType === 'whitelist' ? '#whitelisted-domains' : '#suspicious-domains';
         const tagClass = listType === 'whitelist' ? 'whitelist-tag' : 'suspicious-tag';
         
+        console.log('Updating domain list:', {
+            listType: listType,
+            actionType: actionType,
+            domain: domain,
+            containerId: containerId,
+            tagClass: tagClass,
+            containerExists: $(containerId).length > 0,
+            containerContent: $(containerId).html()
+        });
+        
         if (actionType === 'add') {
-            // Check if domain already exists to prevent duplicates
-            const existingDomain = $(containerId).find(`button[data-domain="${domain}"]`);
-            if (existingDomain.length === 0) {
-                const tagHtml = `<span class="domain-tag ${tagClass}">${escapeHtml(domain)} <button class="remove-domain" data-domain="${escapeHtml(domain)}" data-type="${listType}">×</button></span>`;
-                $(containerId).append(tagHtml);
+            // Check if domain already exists (case-insensitive check)
+            let domainExists = false;
+            $(containerId).find('.domain-tag').each(function() {
+                const $tag = $(this);
+                const existingDomain = $tag.text().replace('×', '').trim().toLowerCase();
+                if (existingDomain === domain.toLowerCase()) {
+                    domainExists = true;
+                    return false; // break out of each loop
+                }
+            });
+            
+            console.log('Domain exists check:', domainExists);
+            
+            if (!domainExists) {
+                const $container = $(containerId);
+                if ($container.length === 0) {
+                    console.error('Container not found:', containerId);
+                    return;
+                }
+                
+                const tagHtml = `<span class="domain-tag ${tagClass}">${escapeHtml(domain)} <button class="remove-domain" data-domain="${escapeHtml(domain.toLowerCase())}" data-type="${listType}">×</button></span>`;
+                console.log('Adding tag HTML:', tagHtml);
+                
+                // Create element and append it
+                const $newTag = $(tagHtml);
+                $container.append($newTag);
+                
+                // Force a reflow and then show with animation
+                $newTag.hide().fadeIn(300);
+                
+                console.log('Domain added to UI, container now contains:', $container.html());
+                console.log('Number of domain tags now:', $container.find('.domain-tag').length);
+            } else {
+                console.log('Domain already exists, not adding');
             }
         } else if (actionType === 'remove') {
-            // More specific selector to ensure we remove the right domain
-            $(containerId).find(`button[data-domain="${domain}"][data-type="${listType}"]`).parent().remove();
+            // Find and remove domain tags that match (case-insensitive)
+            $(containerId).find('.domain-tag').each(function() {
+                const $tag = $(this);
+                const $button = $tag.find('.remove-domain');
+                const tagDomain = $button.data('domain');
+                
+                if (tagDomain && tagDomain.toLowerCase() === domain.toLowerCase()) {
+                    $tag.fadeOut(300, function() {
+                        $(this).remove();
+                    });
+                }
+            });
         }
     }
     
