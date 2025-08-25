@@ -1,0 +1,302 @@
+/**
+ * Spam Detective Styles
+ * 
+ * File: assets/style.css
+ */
+
+/* Main Layout */
+.spam-detective-wrap {
+  max-width: 1200px;
+}
+
+.spam-detective-title {
+  margin-bottom: 10px;
+}
+
+.spam-detective-description {
+  margin-bottom: 20px;
+  color: #666;
+  font-size: 14px;
+}
+
+.spam-detective-main {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.spam-detective-content {
+  flex: 1;
+}
+
+.spam-detective-sidebar {
+  width: 300px;
+  flex-shrink: 0;
+}
+
+/* Card Styling */
+.spam-detective-card {
+  background: #fff;
+  border: 1px solid #ccd0d4;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .04);
+  margin-bottom: 20px;
+  padding: 20px;
+}
+
+.spam-detective-card h2 {
+  margin: 0 0 15px 0;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.spam-detective-card h3 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #23282d;
+}
+
+/* Backup Warning */
+.backup-warning {
+  border-left-color: #dba617;
+  margin-bottom: 20px;
+}
+
+.backup-warning p {
+  margin: 0.5em 0;
+}
+
+/* Analysis Controls */
+.analysis-buttons {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.analysis-progress {
+  padding: 15px 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 20px;
+  background: #f0f0f1;
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 10px 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00a0d2, #0073aa);
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+/* Analysis Summary */
+.analysis-summary {
+  display: flex;
+  gap: 20px;
+  margin: 20px 0;
+}
+
+.summary-stat {
+  flex: 1;
+  text-align: center;
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  background: #f9f9f9;
+}
+
+.stat-number {
+  display: block;
+  font-size: 24px;
+  font-weight: bold;
+  color: #d63638;
+  line-height: 1;
+}
+
+.stat-label {
+  display: block;
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
+
+/* Bulk Actions */
+.bulk-actions {
+  margin: 15px 0;
+  padding: 15px;
+  background: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.delete-button {
+  background: #d63638 !important;
+  border-color: #d63638 !important;
+}
+
+.selected-count {
+  margin-left: auto;
+  font-weight: 600;
+  color: #666;
+}
+
+/* Table Styling */
+.wp-list-table th,
+.wp-list-table td {
+  padding: 12px 8px;
+}
+
+/* Risk Level Badges */
+.risk-level {
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.risk-high {
+  background: #d63638;
+  color: white;
+}
+
+.risk-medium {
+  background: #dba617;
+  color: white;
+}
+
+.risk-low {
+  background: #00a32a;
+  color: white;
+}
+
+.risk-factors {
+  font-size: 11px;
+  color: #666;
+  max-width: 200px;
+}
+
+/* Settings Sections */
+.settings-section {
+  margin-bottom: 25px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #eee;
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.settings-section .description {
+  margin: 0 0 10px 0;
+  font-style: italic;
+  color: #666;
+  font-size: 12px;
+}
+
+/* Domain Lists */
+.domain-list {
+  margin-bottom: 10px;
+  min-height: 40px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.domain-tag {
+  display: inline-block;
+  padding: 4px 8px;
+  margin: 2px;
+  border-radius: 3px;
+  font-size: 12px;
+  position: relative;
+}
+
+.whitelist-tag {
+  background: #e8f5e8;
+  border: 1px solid #4caf50;
+  color: #2e7d32;
+}
+
+.suspicious-tag {
+  background: #ffebee;
+  border: 1px solid #f44336;
+  color: #c62828;
+}
+
+.remove-domain {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  margin-left: 5px;
+  font-weight: bold;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  line-height: 1;
+}
+
+.remove-domain:hover {
+  opacity: 0.7;
+}
+
+/* Domain Input */
+.domain-input {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.domain-input input {
+  flex: 1;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .spam-detective-main {
+    flex-direction: column;
+  }
+
+  .spam-detective-sidebar {
+    width: 100%;
+  }
+
+  .analysis-summary {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .analysis-buttons {
+    flex-direction: column;
+  }
+
+  .bulk-actions {
+    flex-wrap: wrap;
+  }
+
+  .selected-count {
+    margin-left: 0;
+    width: 100%;
+    margin-top: 10px;
+  }
+}
+
+/* Empty States */
+.domain-list:empty::before {
+  content: "No domains configured";
+  color: #999;
+  font-style: italic;
+  font-size: 12px;
+}
