@@ -5,6 +5,7 @@
  */
 
 /* Main Layout */
+
 .spam-detective-title {
   margin-bottom: 10px;
 }
@@ -68,6 +69,7 @@
   display: flex;
   gap: 10px;
   margin-bottom: 15px;
+  flex-wrap: wrap;
 }
 
 .analysis-progress {
@@ -128,9 +130,34 @@
   background: #f9f9f9;
   border: 1px solid #ddd;
   border-radius: 5px;
+}
+
+.bulk-select-actions,
+.bulk-main-actions,
+.bulk-export-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 10px;
+}
+
+.bulk-main-actions {
+  border-top: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+  padding: 10px 0;
+  margin: 10px 0;
+}
+
+.bulk-export-actions {
+  margin-bottom: 0;
+}
+
+.force-delete-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #d63638;
 }
 
 .delete-button {
@@ -144,10 +171,51 @@
   color: #666;
 }
 
-/* Table Styling */
+/* Table Styling with Status Icons */
 .wp-list-table th,
 .wp-list-table td {
   padding: 12px 8px;
+}
+
+/* Status Icons */
+.status-icon {
+  font-size: 16px;
+  display: inline-block;
+  margin-right: 5px;
+}
+
+.status-icon.protected-role {
+  color: #0073aa;
+}
+
+.status-icon.protected {
+  color: #f56e28;
+}
+
+.status-icon.has-orders {
+  color: #00a32a;
+}
+
+.status-icon.deletable {
+  color: #dba617;
+}
+
+/* User Row Styling */
+.protected-user {
+  background-color: #f0f6fc !important;
+}
+
+.user-with-orders {
+  background-color: #f0f9ff !important;
+}
+
+.protected-user .user-checkbox:disabled {
+  opacity: 0.5;
+}
+
+.protected-user .delete-single:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Risk Level Badges */
@@ -198,6 +266,22 @@
   font-style: italic;
   color: #666;
   font-size: 12px;
+}
+
+/* Protected Roles List */
+.protected-roles-list {
+  margin-bottom: 10px;
+}
+
+.role-tag {
+  display: inline-block;
+  padding: 4px 8px;
+  margin: 2px;
+  border-radius: 3px;
+  font-size: 12px;
+  background: #e8f4f8;
+  border: 1px solid #0073aa;
+  color: #0073aa;
 }
 
 /* Domain Lists */
@@ -259,6 +343,58 @@
   flex: 1;
 }
 
+/* Import/Export Controls */
+.import-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.import-options label {
+  display: inline-block;
+  font-size: 12px;
+  color: #666;
+}
+
+.import-status {
+  padding: 8px 12px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.import-status.success {
+  background: #e8f5e8;
+  border: 1px solid #4caf50;
+  color: #2e7d32;
+}
+
+.import-status.error {
+  background: #ffebee;
+  border: 1px solid #f44336;
+  color: #c62828;
+}
+
+/* Export Buttons */
+.bulk-export-actions .button {
+  background: #0073aa;
+  color: white;
+  border-color: #0073aa;
+}
+
+.bulk-export-actions .button:hover {
+  background: #005a87;
+  border-color: #005a87;
+}
+
+/* File Input Styling */
+input[type="file"] {
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: white;
+  font-size: 12px;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .spam-detective-main {
@@ -278,7 +414,9 @@
     flex-direction: column;
   }
 
-  .bulk-actions {
+  .bulk-select-actions,
+  .bulk-main-actions,
+  .bulk-export-actions {
     flex-wrap: wrap;
   }
 
@@ -286,6 +424,16 @@
     margin-left: 0;
     width: 100%;
     margin-top: 10px;
+  }
+
+  .import-controls {
+    align-items: stretch;
+  }
+
+  .import-options {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
   }
 }
 
@@ -295,4 +443,91 @@
   color: #999;
   font-style: italic;
   font-size: 12px;
+}
+
+/* Loading States */
+.analysis-buttons .button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Tooltips for Status Icons */
+.status-icon[title] {
+  cursor: help;
+}
+
+/* Table Filters */
+.table-filters {
+  margin: 15px 0;
+  padding: 10px;
+  background: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.table-filters label {
+  margin-right: 15px;
+  font-size: 12px;
+}
+
+.table-filters input[type="checkbox"] {
+  margin-right: 5px;
+}
+
+/* Cache Status Indicator */
+.cache-status {
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+  margin-top: 5px;
+}
+
+.cache-status.cached {
+  color: #00a32a;
+}
+
+.cache-status.fresh {
+  color: #dba617;
+}
+
+/* Action Buttons */
+.wp-list-table .button-small {
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 1px;
+}
+
+/* Better Visual Hierarchy */
+.spam-detective-card h2:first-child {
+  border-bottom: 2px solid #0073aa;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+}
+
+/* Focus States for Accessibility */
+.user-checkbox:focus,
+.domain-input input:focus,
+input[type="file"]:focus {
+  outline: 2px solid #0073aa;
+  outline-offset: 1px;
+}
+
+/* Print Styles */
+@media print {
+
+  .analysis-buttons,
+  .bulk-actions,
+  .wp-list-table .button {
+    display: none !important;
+  }
+
+  .spam-detective-main {
+    flex-direction: column;
+  }
+
+  .spam-detective-sidebar {
+    width: 100%;
+    page-break-before: always;
+  }
 }

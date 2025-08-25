@@ -20,12 +20,18 @@ class SpamDetective_Analyzer
     '/^[bcdfghjklmnpqrstvwxyz]{4,8}[aeiou]{1,3}[bcdfghjklmnpqrstvwxyz]{2,6}$/', // Consonant-vowel-consonant patterns
   ];
 
+  // Protected roles that cannot be deleted
+  private $protected_roles = ['administrator', 'editor', 'shop_manager'];
+
   public function __construct()
   {
     add_action('wp_ajax_analyze_spam_users', [$this, 'ajax_analyze_spam_users']);
     add_action('wp_ajax_delete_spam_users', [$this, 'ajax_delete_spam_users']);
     add_action('wp_ajax_whitelist_domain', [$this, 'ajax_whitelist_domain']);
     add_action('wp_ajax_manage_suspicious_domains', [$this, 'ajax_manage_suspicious_domains']);
+    add_action('wp_ajax_export_suspicious_users', [$this, 'ajax_export_suspicious_users']);
+    add_action('wp_ajax_export_domain_lists', [$this, 'ajax_export_domain_lists']);
+    add_action('wp_ajax_import_domain_lists', [$this, 'ajax_import_domain_lists']);
   }
 
   public function ajax_analyze_spam_users()
@@ -50,7 +56,23 @@ class SpamDetective_Analyzer
     $suspicious_domains = get_option('spam_detective_suspicious_domains', []);
 
     foreach ($users as $user) {
-      $analysis = $this->analyze_user($user, $whitelist, $suspicious_domains);
+      // Skip protected roles
+      if ($this->is_protected_user($user)) {
+        continue;
+      }
+
+      // Check cache first
+      $cache_key = 'spam_detective_user_' . $user->ID . '_' . md5($user->user_registered . $user->user_email);
+      $cached_analysis = get_transient($cache_key);
+
+      if ($cached_analysis !== false) {
+        $analysis = $cached_analysis;
+      } else {
+        $analysis = $this->analyze_user($user, $whitelist, $suspicious_domains);
+        // Cache for 24 hours
+        set_transient($cache_key, $analysis, 24 * HOUR_IN_SECONDS);
+      }
+
       if ($analysis['is_suspicious']) {
         $suspicious_users[] = [
           'id' => $user->ID,
@@ -59,7 +81,10 @@ class SpamDetective_Analyzer
           'display_name' => $user->display_name,
           'registered' => $user->user_registered,
           'risk_level' => $analysis['risk_level'],
-          'reasons' => $analysis['reasons']
+          'reasons' => $analysis['reasons'],
+          'can_delete' => $this->can_delete_user($user),
+          'has_orders' => $this->has_woocommerce_orders($user->ID),
+          'roles' => $this->get_user_roles($user)
         ];
       }
     }
@@ -134,6 +159,12 @@ class SpamDetective_Analyzer
       }
     }
 
+    // WooCommerce specific checks
+    if ($this->has_woocommerce_orders($user->ID)) {
+      $reasons[] = 'Has WooCommerce orders';
+      $risk_score -= 30; // Reduce risk for users with orders
+    }
+
     // Determine risk level
     $risk_level = 'low';
     if ($risk_score >= 70) {
@@ -148,6 +179,62 @@ class SpamDetective_Analyzer
       'reasons' => $reasons,
       'score' => $risk_score
     ];
+  }
+
+  /**
+   * Check if user has protected role
+   */
+  private function is_protected_user($user)
+  {
+    $user_roles = $this->get_user_roles($user);
+    return !empty(array_intersect($user_roles, $this->protected_roles));
+  }
+
+  /**
+   * Check if user can be deleted (not protected)
+   */
+  private function can_delete_user($user)
+  {
+    return !$this->is_protected_user($user);
+  }
+
+  /**
+   * Get user roles
+   */
+  private function get_user_roles($user)
+  {
+    $user_data = get_userdata($user->ID);
+    return $user_data ? $user_data->roles : [];
+  }
+
+  /**
+   * Check if user has WooCommerce orders
+   */
+  private function has_woocommerce_orders($user_id)
+  {
+    if (!class_exists('WooCommerce')) {
+      return false;
+    }
+
+    $orders = wc_get_orders([
+      'customer_id' => $user_id,
+      'limit' => 1,
+      'status' => ['completed', 'processing', 'on-hold']
+    ]);
+
+    return !empty($orders);
+  }
+
+  /**
+   * Clear cache for deleted users
+   */
+  private function clear_user_cache($user_id)
+  {
+    $user = get_user_by('ID', $user_id);
+    if ($user) {
+      $cache_key = 'spam_detective_user_' . $user_id . '_' . md5($user->user_registered . $user->user_email);
+      delete_transient($cache_key);
+    }
   }
 
   private function is_random_string($string)
@@ -192,14 +279,166 @@ class SpamDetective_Analyzer
 
     $user_ids = $_POST['user_ids'] ?? [];
     $deleted = 0;
+    $skipped = 0;
 
     foreach ($user_ids as $user_id) {
+      $user = get_user_by('ID', $user_id);
+
+      if (!$user || $this->is_protected_user($user)) {
+        $skipped++;
+        continue;
+      }
+
+      // Additional check for WooCommerce orders if force delete not enabled
+      $force_delete = isset($_POST['force_delete']) && $_POST['force_delete'];
+      if (!$force_delete && $this->has_woocommerce_orders($user_id)) {
+        $skipped++;
+        continue;
+      }
+
       if (wp_delete_user($user_id)) {
+        $this->clear_user_cache($user_id);
         $deleted++;
       }
     }
 
-    wp_send_json_success(['deleted' => $deleted]);
+    wp_send_json_success([
+      'deleted' => $deleted,
+      'skipped' => $skipped,
+      'message' => $skipped > 0 ? "Deleted {$deleted} users. Skipped {$skipped} protected users." : "Deleted {$deleted} users."
+    ]);
+  }
+
+  /**
+   * Export suspicious users to CSV
+   */
+  public function ajax_export_suspicious_users()
+  {
+    check_ajax_referer('spam_detective_nonce', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+      wp_die('Insufficient permissions');
+    }
+
+    $user_ids = $_POST['user_ids'] ?? [];
+
+    if (empty($user_ids)) {
+      wp_send_json_error('No users selected for export');
+    }
+
+    $csv_data = [];
+    $csv_data[] = ['ID', 'Username', 'Email', 'Display Name', 'Registration Date', 'Risk Level', 'Risk Factors', 'Roles', 'Has Orders', 'Can Delete'];
+
+    foreach ($user_ids as $user_id) {
+      $user = get_user_by('ID', $user_id);
+      if (!$user) continue;
+
+      // Re-analyze user for current data
+      $whitelist = get_option('spam_detective_whitelist', []);
+      $suspicious_domains = get_option('spam_detective_suspicious_domains', []);
+      $analysis = $this->analyze_user($user, $whitelist, $suspicious_domains);
+
+      $csv_data[] = [
+        $user->ID,
+        $user->user_login,
+        $user->user_email,
+        $user->display_name,
+        $user->user_registered,
+        $analysis['risk_level'],
+        implode('; ', $analysis['reasons']),
+        implode(', ', $this->get_user_roles($user)),
+        $this->has_woocommerce_orders($user->ID) ? 'Yes' : 'No',
+        $this->can_delete_user($user) ? 'Yes' : 'No'
+      ];
+    }
+
+    // Create CSV content
+    $csv_content = '';
+    foreach ($csv_data as $row) {
+      $csv_content .= implode(',', array_map(function ($field) {
+        return '"' . str_replace('"', '""', $field) . '"';
+      }, $row)) . "\n";
+    }
+
+    wp_send_json_success([
+      'filename' => 'suspicious-users-' . date('Y-m-d-H-i-s') . '.csv',
+      'content' => $csv_content
+    ]);
+  }
+
+  /**
+   * Export domain lists
+   */
+  public function ajax_export_domain_lists()
+  {
+    check_ajax_referer('spam_detective_nonce', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+      wp_die('Insufficient permissions');
+    }
+
+    $whitelist = get_option('spam_detective_whitelist', []);
+    $suspicious_domains = get_option('spam_detective_suspicious_domains', []);
+
+    $export_data = [
+      'exported_at' => current_time('mysql'),
+      'whitelist' => $whitelist,
+      'suspicious_domains' => $suspicious_domains
+    ];
+
+    wp_send_json_success([
+      'filename' => 'spam-detective-domains-' . date('Y-m-d-H-i-s') . '.json',
+      'content' => json_encode($export_data, JSON_PRETTY_PRINT)
+    ]);
+  }
+
+  /**
+   * Import domain lists
+   */
+  public function ajax_import_domain_lists()
+  {
+    check_ajax_referer('spam_detective_nonce', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+      wp_die('Insufficient permissions');
+    }
+
+    if (!isset($_FILES['import_file']) || $_FILES['import_file']['error'] !== UPLOAD_ERR_OK) {
+      wp_send_json_error('No file uploaded or upload error');
+    }
+
+    $file_content = file_get_contents($_FILES['import_file']['tmp_name']);
+    $import_data = json_decode($file_content, true);
+
+    if (json_last_error() !== JSON_ERROR_NONE) {
+      wp_send_json_error('Invalid JSON file');
+    }
+
+    $merge_mode = $_POST['merge_mode'] ?? 'replace';
+
+    // Import whitelist
+    if (isset($import_data['whitelist']) && is_array($import_data['whitelist'])) {
+      if ($merge_mode === 'merge') {
+        $current_whitelist = get_option('spam_detective_whitelist', []);
+        $new_whitelist = array_unique(array_merge($current_whitelist, $import_data['whitelist']));
+      } else {
+        $new_whitelist = $import_data['whitelist'];
+      }
+      update_option('spam_detective_whitelist', $new_whitelist);
+    }
+
+    // Import suspicious domains
+    if (isset($import_data['suspicious_domains']) && is_array($import_data['suspicious_domains'])) {
+      if ($merge_mode === 'merge') {
+        $current_suspicious = get_option('spam_detective_suspicious_domains', []);
+        $new_suspicious = array_unique(array_merge($current_suspicious, $import_data['suspicious_domains']));
+      } else {
+        $new_suspicious = $import_data['suspicious_domains'];
+      }
+      update_option('spam_detective_suspicious_domains', $new_suspicious);
+    }
+
+    wp_send_json_success(['message' => 'Domain lists imported successfully']);
   }
 
   public function ajax_whitelist_domain()

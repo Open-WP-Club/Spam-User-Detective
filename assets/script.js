@@ -1,5 +1,5 @@
 /**
- * Spam Detective Frontend Script
+ * Enhanced Spam Detective Frontend Script
  * 
  * File: assets/script.js
  */
@@ -12,6 +12,22 @@ jQuery(document).ready(function($) {
     $('#analyze-users, #quick-scan').click(function() {
         const isQuickScan = $(this).attr('id') === 'quick-scan';
         startAnalysis(isQuickScan);
+    });
+    
+    // Clear cache
+    $('#clear-cache, #clear-all-cache').click(function() {
+        // Clear transients by making a simple AJAX call
+        $.ajax({
+            url: spamDetective.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'clear_spam_cache',
+                nonce: spamDetective.nonce
+            },
+            success: function(response) {
+                alert('Cache cleared successfully. Next analysis will be slower but more accurate.');
+            }
+        });
     });
     
     function startAnalysis(isQuickScan) {
@@ -62,20 +78,25 @@ jQuery(document).ready(function($) {
     function displayResults() {
         const highConfidence = suspiciousUsers.filter(u => u.risk_level === 'high').length;
         const suspiciousDomains = new Set(suspiciousUsers.map(u => u.email.split('@')[1])).size;
+        const protectedUsers = suspiciousUsers.filter(u => !u.can_delete).length;
         
         $('#total-suspicious').text(suspiciousUsers.length);
         $('#high-confidence').text(highConfidence);
         $('#suspicious-domains').text(suspiciousDomains);
+        $('#protected-users').text(protectedUsers);
         $('#displaying-num').text(suspiciousUsers.length + ' items');
         
         let html = '';
         suspiciousUsers.forEach(user => {
             const riskClass = 'risk-' + user.risk_level;
             const emailDomain = user.email.split('@')[1];
+            const statusIcon = getStatusIcon(user);
+            const statusClass = getStatusClass(user);
             
             html += `
-                <tr data-user-id="${user.id}">
-                    <td><input type="checkbox" class="user-checkbox" value="${user.id}"></td>
+                <tr data-user-id="${user.id}" class="${statusClass}">
+                    <td><input type="checkbox" class="user-checkbox" value="${user.id}" ${!user.can_delete ? 'disabled' : ''}></td>
+                    <td>${statusIcon}</td>
                     <td><span class="risk-level ${riskClass}">${user.risk_level}</span></td>
                     <td><strong>${escapeHtml(user.username)}</strong></td>
                     <td>${escapeHtml(user.email)}</td>
@@ -83,7 +104,7 @@ jQuery(document).ready(function($) {
                     <td>${user.registered}</td>
                     <td class="risk-factors">${user.reasons.join(', ')}</td>
                     <td>
-                        <button class="button button-small delete-single" data-user-id="${user.id}">Delete</button>
+                        <button class="button button-small delete-single" data-user-id="${user.id}" ${!user.can_delete ? 'disabled' : ''}>Delete</button>
                         <button class="button button-small whitelist-domain" data-domain="${emailDomain}">Whitelist Domain</button>
                     </td>
                 </tr>
@@ -91,6 +112,25 @@ jQuery(document).ready(function($) {
         });
         $('#suspicious-users-list').html(html);
         updateSelectedCount();
+    }
+    
+    function getStatusIcon(user) {
+        if (!user.can_delete) {
+            if (user.roles.includes('administrator') || user.roles.includes('editor') || user.roles.includes('shop_manager')) {
+                return '<span class="status-icon protected-role" title="Protected Role">🛡️</span>';
+            }
+            return '<span class="status-icon protected" title="Protected User">🔒</span>';
+        }
+        if (user.has_orders) {
+            return '<span class="status-icon has-orders" title="Has WooCommerce Orders">🛒</span>';
+        }
+        return '<span class="status-icon deletable" title="Can be deleted">⚠️</span>';
+    }
+    
+    function getStatusClass(user) {
+        if (!user.can_delete) return 'protected-user';
+        if (user.has_orders) return 'user-with-orders';
+        return 'deletable-user';
     }
     
     function escapeHtml(text) {
@@ -103,14 +143,24 @@ jQuery(document).ready(function($) {
     $(document).on('change', '.user-checkbox', updateSelectedCount);
     
     $('#select-all-checkbox').change(function() {
-        $('.user-checkbox').prop('checked', this.checked);
+        $('.user-checkbox:not(:disabled)').prop('checked', this.checked);
         updateSelectedCount();
     });
     
     $('#select-all-high').click(function() {
         $('.user-checkbox').prop('checked', false);
         suspiciousUsers.forEach(user => {
-            if (user.risk_level === 'high') {
+            if (user.risk_level === 'high' && user.can_delete) {
+                $(`.user-checkbox[value="${user.id}"]`).prop('checked', true);
+            }
+        });
+        updateSelectedCount();
+    });
+    
+    $('#select-all-deletable').click(function() {
+        $('.user-checkbox').prop('checked', false);
+        suspiciousUsers.forEach(user => {
+            if (user.can_delete && !user.has_orders) {
                 $(`.user-checkbox[value="${user.id}"]`).prop('checked', true);
             }
         });
@@ -118,7 +168,7 @@ jQuery(document).ready(function($) {
     });
     
     $('#select-all-suspicious').click(function() {
-        $('.user-checkbox').prop('checked', true);
+        $('.user-checkbox:not(:disabled)').prop('checked', true);
         updateSelectedCount();
     });
     
@@ -129,12 +179,12 @@ jQuery(document).ready(function($) {
         $('#selected-count').text(selectedUsers.length + ' selected');
         
         // Update select all checkbox state
-        const totalCheckboxes = $('.user-checkbox').length;
+        const totalEnabledCheckboxes = $('.user-checkbox:not(:disabled)').length;
         const checkedCheckboxes = $('.user-checkbox:checked').length;
         
         if (checkedCheckboxes === 0) {
             $('#select-all-checkbox').prop('indeterminate', false).prop('checked', false);
-        } else if (checkedCheckboxes === totalCheckboxes) {
+        } else if (checkedCheckboxes === totalEnabledCheckboxes) {
             $('#select-all-checkbox').prop('indeterminate', false).prop('checked', true);
         } else {
             $('#select-all-checkbox').prop('indeterminate', true);
@@ -148,30 +198,28 @@ jQuery(document).ready(function($) {
             return;
         }
         
-        if (confirm(`Are you sure you want to delete ${selectedUsers.length} users? This action cannot be undone.`)) {
-            deleteUsers(selectedUsers);
-        }
+        const forceDelete = $('#force-delete-checkbox').is(':checked');
+        deleteUsers(selectedUsers, forceDelete);
     });
     
     $(document).on('click', '.delete-single', function() {
         const userId = $(this).data('user-id');
-        if (confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
-            deleteUsers([userId]);
-        }
+        deleteUsers([userId], true);
     });
     
-    function deleteUsers(userIds) {
+    function deleteUsers(userIds, forceDelete = false) {
         $.ajax({
             url: spamDetective.ajaxUrl,
             type: 'POST',
             data: {
                 action: 'delete_spam_users',
                 user_ids: userIds,
+                force_delete: forceDelete,
                 nonce: spamDetective.nonce
             },
             success: function(response) {
                 if (response.success) {
-                    alert(`Successfully deleted ${response.data.deleted} users.`);
+                    alert(response.data.message || `Successfully deleted ${response.data.deleted} users.`);
                     // Remove deleted users from display
                     userIds.forEach(id => {
                         $(`tr[data-user-id="${id}"]`).remove();
@@ -187,6 +235,127 @@ jQuery(document).ready(function($) {
                 alert('An error occurred while deleting users. Please try again.');
             }
         });
+    }
+    
+    // Export Functions
+    $('#export-selected').click(function() {
+        if (selectedUsers.length === 0) {
+            alert('Please select users to export.');
+            return;
+        }
+        exportUsers(selectedUsers);
+    });
+    
+    $('#export-all').click(function() {
+        if (suspiciousUsers.length === 0) {
+            alert('No users to export.');
+            return;
+        }
+        const allUserIds = suspiciousUsers.map(u => u.id.toString());
+        exportUsers(allUserIds);
+    });
+    
+    function exportUsers(userIds) {
+        $.ajax({
+            url: spamDetective.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'export_suspicious_users',
+                user_ids: userIds,
+                nonce: spamDetective.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    downloadFile(response.data.content, response.data.filename, 'text/csv');
+                    alert(`Exported ${userIds.length} users successfully.`);
+                } else {
+                    alert('Error exporting users: ' + response.data);
+                }
+            },
+            error: function() {
+                alert('An error occurred while exporting users. Please try again.');
+            }
+        });
+    }
+    
+    // Import/Export Domain Lists
+    $('#export-domains').click(function() {
+        $.ajax({
+            url: spamDetective.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'export_domain_lists',
+                nonce: spamDetective.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    downloadFile(response.data.content, response.data.filename, 'application/json');
+                    alert('Domain lists exported successfully.');
+                } else {
+                    alert('Error exporting domain lists: ' + response.data);
+                }
+            },
+            error: function() {
+                alert('An error occurred while exporting domain lists. Please try again.');
+            }
+        });
+    });
+    
+    $('#import-domains').click(function() {
+        const fileInput = document.getElementById('import-file');
+        const file = fileInput.files[0];
+        
+        if (!file) {
+            alert('Please select a file to import.');
+            return;
+        }
+        
+        if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+            alert('Please select a valid JSON file.');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('action', 'import_domain_lists');
+        formData.append('import_file', file);
+        formData.append('merge_mode', $('input[name="import_mode"]:checked').val());
+        formData.append('nonce', spamDetective.nonce);
+        
+        $('#import-status').show().text('Importing...');
+        
+        $.ajax({
+            url: spamDetective.ajaxUrl,
+            type: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function(response) {
+                if (response.success) {
+                    $('#import-status').text('Import successful! Reloading page...').addClass('success');
+                    setTimeout(() => {
+                        location.reload();
+                    }, 2000);
+                } else {
+                    $('#import-status').text('Import failed: ' + response.data).addClass('error');
+                }
+            },
+            error: function() {
+                $('#import-status').text('An error occurred during import.').addClass('error');
+            }
+        });
+    });
+    
+    // Utility function to download files
+    function downloadFile(content, filename, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     }
     
     // Domain Management
