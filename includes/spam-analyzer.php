@@ -18,6 +18,8 @@ class SpamDetective_Analyzer
     '/^[a-z]+\d+$/',    // Letters followed by numbers
     '/^\w+\-\d+$/',     // Word-number pattern like "wispaky-6855"
     '/^[bcdfghjklmnpqrstvwxyz]{4,8}[aeiou]{1,3}[bcdfghjklmnpqrstvwxyz]{2,6}$/', // Consonant-vowel-consonant patterns
+    '/^[a-z]{1,3}(\.[a-z]{1,3}){3,}$/', // Multiple dots pattern like "sp.am.ple"
+    '/^[a-z]+(\.[a-z]+){2,}$/', // General multiple dots pattern
   ];
 
   // Protected roles that cannot be deleted
@@ -61,6 +63,17 @@ class SpamDetective_Analyzer
         continue;
       }
 
+      // Skip users with fulfilled WooCommerce orders completely
+      if ($this->has_fulfilled_woocommerce_orders($user->ID)) {
+        continue;
+      }
+
+      // Check if email domain is whitelisted - skip completely if it is
+      $email_domain = explode('@', $user->user_email)[1] ?? '';
+      if (in_array(strtolower($email_domain), array_map('strtolower', $whitelist))) {
+        continue;
+      }
+
       // Check cache first
       $cache_key = 'spam_detective_user_' . $user->ID . '_' . md5($user->user_registered . $user->user_email);
       $cached_analysis = get_transient($cache_key);
@@ -100,24 +113,32 @@ class SpamDetective_Analyzer
     $reasons = [];
     $risk_score = 0;
 
-    $email_domain = explode('@', $user->user_email)[1] ?? '';
+    $email_domain = strtolower(explode('@', $user->user_email)[1] ?? '');
 
-    // Skip whitelisted domains
-    if (in_array($email_domain, $whitelist)) {
+    // Skip whitelisted domains (case-insensitive comparison)
+    $whitelist_lower = array_map('strtolower', $whitelist);
+    if (in_array($email_domain, $whitelist_lower)) {
       return ['is_suspicious' => false, 'risk_level' => 'low', 'reasons' => []];
     }
 
-    // Check suspicious domains
-    if (in_array($email_domain, $suspicious_domains)) {
+    // Check suspicious domains (case-insensitive comparison)
+    $suspicious_domains_lower = array_map('strtolower', $suspicious_domains);
+    if (in_array($email_domain, $suspicious_domains_lower)) {
       $reasons[] = 'Known spam domain';
       $risk_score += 50;
     }
 
     // Check username patterns
     foreach ($this->common_patterns as $pattern) {
-      if (preg_match($pattern, $user->user_login)) {
-        $reasons[] = 'Suspicious username pattern';
-        $risk_score += 30;
+      if (preg_match($pattern, strtolower($user->user_login))) {
+        if (strpos($pattern, '\.') !== false) {
+          // This is a dot pattern - high priority
+          $reasons[] = 'Suspicious username pattern (multiple dots)';
+          $risk_score += 60; // Higher score for dot patterns
+        } else {
+          $reasons[] = 'Suspicious username pattern';
+          $risk_score += 30;
+        }
         break;
       }
     }
@@ -135,7 +156,7 @@ class SpamDetective_Analyzer
     }
 
     // Check for suspicious email patterns
-    if (preg_match('/^[a-z]+\d+@/', $user->user_email)) {
+    if (preg_match('/^[a-z]+\d+@/', strtolower($user->user_email))) {
       $reasons[] = 'Generic email pattern';
       $risk_score += 15;
     }
@@ -159,11 +180,7 @@ class SpamDetective_Analyzer
       }
     }
 
-    // WooCommerce specific checks
-    if ($this->has_woocommerce_orders($user->ID)) {
-      $reasons[] = 'Has WooCommerce orders';
-      $risk_score -= 30; // Reduce risk for users with orders
-    }
+    // Note: WooCommerce checks are now handled in the main loop to completely exclude users
 
     // Determine risk level
     $risk_level = 'low';
@@ -179,6 +196,24 @@ class SpamDetective_Analyzer
       'reasons' => $reasons,
       'score' => $risk_score
     ];
+  }
+
+  /**
+   * Check if user has fulfilled WooCommerce orders
+   */
+  private function has_fulfilled_woocommerce_orders($user_id)
+  {
+    if (!class_exists('WooCommerce')) {
+      return false;
+    }
+
+    $orders = wc_get_orders([
+      'customer_id' => $user_id,
+      'limit' => 1,
+      'status' => ['completed'] // Only check for completed/fulfilled orders
+    ]);
+
+    return !empty($orders);
   }
 
   /**
@@ -208,7 +243,7 @@ class SpamDetective_Analyzer
   }
 
   /**
-   * Check if user has WooCommerce orders
+   * Check if user has WooCommerce orders (any status)
    */
   private function has_woocommerce_orders($user_id)
   {
@@ -450,24 +485,31 @@ class SpamDetective_Analyzer
     }
 
     $action_type = sanitize_text_field($_POST['action_type'] ?? '');
-    $domain = sanitize_text_field($_POST['domain'] ?? '');
+    $domain = strtolower(sanitize_text_field($_POST['domain'] ?? '')); // Convert to lowercase
 
     if (!$domain) {
       wp_send_json_error('Invalid domain');
     }
 
     $whitelist = get_option('spam_detective_whitelist', []);
+    $whitelist = array_map('strtolower', $whitelist); // Convert existing to lowercase
 
     if ($action_type === 'add') {
       if (!in_array($domain, $whitelist)) {
         $whitelist[] = $domain;
         update_option('spam_detective_whitelist', $whitelist);
+
+        // Clear cache when whitelist changes
+        $this->clear_all_user_cache();
       }
     } elseif ($action_type === 'remove') {
       $whitelist = array_filter($whitelist, function ($d) use ($domain) {
         return $d !== $domain;
       });
       update_option('spam_detective_whitelist', array_values($whitelist));
+
+      // Clear cache when whitelist changes
+      $this->clear_all_user_cache();
     }
 
     wp_send_json_success();
@@ -482,26 +524,47 @@ class SpamDetective_Analyzer
     }
 
     $action_type = sanitize_text_field($_POST['action_type'] ?? '');
-    $domain = sanitize_text_field($_POST['domain'] ?? '');
+    $domain = strtolower(sanitize_text_field($_POST['domain'] ?? '')); // Convert to lowercase
 
     if (!$domain) {
       wp_send_json_error('Invalid domain');
     }
 
     $suspicious_domains = get_option('spam_detective_suspicious_domains', []);
+    $suspicious_domains = array_map('strtolower', $suspicious_domains); // Convert existing to lowercase
 
     if ($action_type === 'add') {
       if (!in_array($domain, $suspicious_domains)) {
         $suspicious_domains[] = $domain;
         update_option('spam_detective_suspicious_domains', $suspicious_domains);
+
+        // Clear cache when suspicious domains change
+        $this->clear_all_user_cache();
       }
     } elseif ($action_type === 'remove') {
       $suspicious_domains = array_filter($suspicious_domains, function ($d) use ($domain) {
         return $d !== $domain;
       });
       update_option('spam_detective_suspicious_domains', array_values($suspicious_domains));
+
+      // Clear cache when suspicious domains change
+      $this->clear_all_user_cache();
     }
 
     wp_send_json_success();
+  }
+
+  /**
+   * Clear all user analysis cache
+   */
+  private function clear_all_user_cache()
+  {
+    global $wpdb;
+
+    $wpdb->query(
+      "DELETE FROM {$wpdb->options} 
+       WHERE option_name LIKE '_transient_spam_detective_user_%' 
+       OR option_name LIKE '_transient_timeout_spam_detective_user_%'"
+    );
   }
 }
