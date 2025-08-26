@@ -153,7 +153,7 @@ class SpamDetective_Analyzer
     // Check for missing display name
     if (empty($user->display_name) || $user->display_name === $user->user_login) {
       $reasons[] = 'No display name';
-      $risk_score += 10;
+      $risk_score += 70; 
     }
 
     // Check for suspicious email patterns
@@ -169,14 +169,14 @@ class SpamDetective_Analyzer
       $risk_score += min(20, $domain_count);
     }
 
-    // Check recent registration with no activity
+    // Check registration with no activity
     $reg_time = strtotime($user->user_registered);
-    if (time() - $reg_time > 86400) { // More than 1 day old
+    if (time() - $reg_time > (30 * 24 * 60 * 60)) { 
       $post_count = count_user_posts($user->ID);
       $comment_count = get_comments(['user_id' => $user->ID, 'count' => true]);
 
       if ($post_count == 0 && $comment_count == 0) {
-        $reasons[] = 'No activity since registration';
+        $reasons[] = 'No activity after 30 days';
         $risk_score += 20;
       }
     }
