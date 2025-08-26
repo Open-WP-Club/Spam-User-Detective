@@ -111,10 +111,12 @@ class SpamDetective_Analyzer
 
   public function analyze_user($user, $whitelist = [], $suspicious_domains = [])
   {
+    global $wpdb;
     $reasons = [];
     $risk_score = 0;
 
     $email_domain = strtolower(explode('@', $user->user_email)[1] ?? '');
+    $email_prefix = explode('@', $user->user_email)[0] ?? '';
 
     // Skip whitelisted domains (case-insensitive comparison)
     $whitelist_lower = array_map('strtolower', $whitelist);
@@ -186,10 +188,38 @@ class SpamDetective_Analyzer
       }
     }
 
-    // Check for suspicious email patterns
+    // 1. Check for suspicious TLD domains (without .info)
+    $suspicious_tlds = ['.tk', '.ml', '.ga', '.cf', '.gq', '.pw', '.cc', '.ws'];
+    foreach ($suspicious_tlds as $tld) {
+      if (str_ends_with($email_domain, $tld)) {
+        $risk_score += 15;
+        $reasons[] = 'Suspicious domain extension';
+        break;
+      }
+    }
+
+    // 2. Enhanced email pattern analysis
     if (preg_match('/^[a-z]+\d+@/', strtolower($user->user_email))) {
       $reasons[] = 'Generic email pattern';
       $risk_score += 15;
+    }
+
+    // Check for email with trailing numbers (common bot pattern)
+    if (preg_match('/\d{2,}@/', $user->user_email)) {
+      $risk_score += 10;
+      $reasons[] = 'Email with trailing numbers';
+    }
+
+    // Check for very short email prefixes (less than 4 characters)
+    if (strlen($email_prefix) < 4) {
+      $risk_score += 8;
+      $reasons[] = 'Very short email prefix';
+    }
+
+    // Check for email prefix that's all numbers
+    if (is_numeric($email_prefix)) {
+      $risk_score += 15;
+      $reasons[] = 'Numeric email prefix';
     }
 
     // Check for bulk registrations from same domain
@@ -199,6 +229,107 @@ class SpamDetective_Analyzer
       $risk_score += min(20, $domain_count);
     }
 
+    // 4. Check for common spam username patterns
+    $spam_username_patterns = [
+      '/^(user|admin|test|guest|temp|spam|bot)\d*$/',
+      '/^[a-z]{1,3}\d{4,}$/', // Short letters + many numbers: a1234, xy5678
+      '/^[a-z]+_\d{4,}$/',    // word_1234 pattern
+      '/^(first|last|full)?name\d*$/',
+      '/^[a-z]+\d{8,}$/'      // Letters followed by 8+ digits
+    ];
+
+    foreach ($spam_username_patterns as $pattern) {
+      if (preg_match($pattern, $username_lower)) {
+        $risk_score += 20;
+        $reasons[] = 'Common spam username pattern';
+        break;
+      }
+    }
+
+    // 5. Display name analysis (when it exists)
+    if (!empty($user->display_name) && $user->display_name !== $user->user_login) {
+      $display_lower = strtolower($user->display_name);
+
+      // Display name is just numbers
+      if (is_numeric(str_replace(' ', '', $user->display_name))) {
+        $risk_score += 10;
+        $reasons[] = 'Numeric display name';
+      }
+
+      // Display name matches common spam patterns
+      $spam_display_patterns = ['user', 'test', 'admin', 'guest', 'temp'];
+      foreach ($spam_display_patterns as $pattern) {
+        if (strpos($display_lower, $pattern) !== false) {
+          $risk_score += 8;
+          $reasons[] = 'Generic display name';
+          break;
+        }
+      }
+    }
+
+    // 6. First/Last name analysis
+    $first_name = trim($user->first_name);
+    $last_name = trim($user->last_name);
+
+    if (!empty($first_name) || !empty($last_name)) {
+      // Names that are obviously fake
+      $fake_names = ['test', 'user', 'admin', 'guest', 'temp', 'spam', 'bot'];
+
+      if (
+        in_array(strtolower($first_name), $fake_names) ||
+        in_array(strtolower($last_name), $fake_names)
+      ) {
+        $risk_score += 15;
+        $reasons[] = 'Fake name used';
+      }
+
+      // Names that are just numbers
+      if (is_numeric($first_name) || is_numeric($last_name)) {
+        $risk_score += 12;
+        $reasons[] = 'Numeric name fields';
+      }
+
+      // Single character names (suspicious)
+      if (strlen($first_name) === 1 || strlen($last_name) === 1) {
+        $risk_score += 8;
+        $reasons[] = 'Single character name';
+      }
+    } else {
+      // Having complete name info is slightly positive
+      $risk_score -= 5; // Small bonus for providing names
+    }
+
+    // 7. Sequential/Numeric Username Detection
+    if (preg_match('/^[a-z]+\d{1,4}$/', $username_lower)) {
+      // Check if similar usernames exist (user1, user2, user3...)
+      $base_username = preg_replace('/\d+$/', '', $username_lower);
+      $similar_count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM {$wpdb->users} WHERE user_login LIKE %s",
+        $base_username . '%'
+      ));
+
+      if ($similar_count > 3) {
+        $risk_score += 20;
+        $reasons[] = "Sequential username pattern ({$similar_count} similar)";
+      }
+    }
+
+    // 8. Registration Time Burst Detection
+    $reg_timestamp = strtotime($user->user_registered);
+    $time_window = 1800; // 30 minutes
+
+    $burst_count = $wpdb->get_var($wpdb->prepare(
+      "SELECT COUNT(*) FROM {$wpdb->users} 
+       WHERE user_registered BETWEEN %s AND %s",
+      date('Y-m-d H:i:s', $reg_timestamp - $time_window),
+      date('Y-m-d H:i:s', $reg_timestamp + $time_window)
+    ));
+
+    if ($burst_count > 10) {
+      $risk_score += 25;
+      $reasons[] = "Mass registration burst ({$burst_count} users in 1 hour)";
+    }
+
     // Check registration with no activity
     $reg_time = strtotime($user->user_registered);
     if (time() - $reg_time > (30 * 24 * 60 * 60)) {
@@ -206,7 +337,7 @@ class SpamDetective_Analyzer
       $comment_count = get_comments(['user_id' => $user->ID, 'count' => true]);
 
       if ($post_count == 0 && $comment_count == 0) {
-        $reasons[] = 'No activity after 30 days';
+        $reasons[] = 'No activity after 30 days'; 
         $risk_score += 20;
       }
     }
