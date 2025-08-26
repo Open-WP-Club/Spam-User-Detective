@@ -153,7 +153,37 @@ class SpamDetective_Analyzer
     // Check for missing display name
     if (empty($user->display_name) || $user->display_name === $user->user_login) {
       $reasons[] = 'No display name';
-      $risk_score += 70; 
+      $risk_score += 70;
+    }
+
+    // Check username vs email consistency (suspicious pattern for bots)
+    $email_prefix = explode('@', $user->user_email)[0];
+    $username_lower = strtolower($user->user_login);
+    $email_prefix_lower = strtolower($email_prefix);
+
+    // Remove common separators for comparison
+    $username_clean = str_replace(['.', '_', '-'], '', $username_lower);
+    $email_clean = str_replace(['.', '_', '-'], '', $email_prefix_lower);
+
+    if ($username_lower === $email_prefix_lower) {
+      // Exact match: username = email prefix (common bot pattern)
+      $risk_score += 15;
+      $reasons[] = 'Username exactly matches email prefix';
+    } elseif ($username_clean === $email_clean && $username_lower !== $email_prefix_lower) {
+      // Same after removing separators (john.doe vs johndoe)
+      $risk_score += 13;
+      $reasons[] = 'Username similar to email prefix';
+    } elseif (strlen($username_lower) >= 4 && strlen($email_prefix_lower) >= 4) {
+      // Check for partial matches (at least 4 characters to avoid false positives)
+      if (strpos($email_prefix_lower, $username_lower) !== false) {
+        // Username is contained in email prefix
+        $risk_score += 12;
+        $reasons[] = 'Username contained in email';
+      } elseif (strpos($username_lower, $email_prefix_lower) !== false) {
+        // Email prefix is contained in username  
+        $risk_score += 12;
+        $reasons[] = 'Email prefix contained in username';
+      }
     }
 
     // Check for suspicious email patterns
@@ -171,7 +201,7 @@ class SpamDetective_Analyzer
 
     // Check registration with no activity
     $reg_time = strtotime($user->user_registered);
-    if (time() - $reg_time > (30 * 24 * 60 * 60)) { 
+    if (time() - $reg_time > (30 * 24 * 60 * 60)) {
       $post_count = count_user_posts($user->ID);
       $comment_count = get_comments(['user_id' => $user->ID, 'count' => true]);
 
