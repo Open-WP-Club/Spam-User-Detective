@@ -214,9 +214,13 @@ class SpamUserDetective
       wp_cache_flush_group('spam_detective');
     }
 
+    // Log the cache clearing action
+    error_log("Spam Detective: Manual cache clear requested, cleared {$deleted} cache entries");
+
     wp_send_json_success([
       'message' => sprintf(__('Cleared %d cache entries.', 'spam-user-detective'), $deleted),
-      'deleted' => $deleted
+      'deleted' => $deleted,
+      'timestamp' => current_time('mysql')
     ]);
   }
 

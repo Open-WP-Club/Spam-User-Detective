@@ -337,7 +337,7 @@ class SpamDetective_Analyzer
       $comment_count = get_comments(['user_id' => $user->ID, 'count' => true]);
 
       if ($post_count == 0 && $comment_count == 0) {
-        $reasons[] = 'No activity after 30 days'; 
+        $reasons[] = 'No activity after 30 days';
         $risk_score += 20;
       }
     }
@@ -635,6 +635,10 @@ class SpamDetective_Analyzer
       update_option('spam_detective_suspicious_domains', $new_suspicious);
     }
 
+    // Clear cache after import
+    $this->clear_all_user_cache();
+    error_log("Spam Detective: Domain lists imported, cache cleared");
+
     wp_send_json_success(['message' => 'Domain lists imported successfully']);
   }
 
@@ -655,6 +659,7 @@ class SpamDetective_Analyzer
 
     $whitelist = get_option('spam_detective_whitelist', []);
     $whitelist = array_map('strtolower', $whitelist); // Convert existing to lowercase
+    $cache_cleared = false;
 
     if ($action_type === 'add') {
       if (!in_array($domain, $whitelist)) {
@@ -662,19 +667,29 @@ class SpamDetective_Analyzer
         update_option('spam_detective_whitelist', $whitelist);
 
         // Clear cache when whitelist changes
-        $this->clear_all_user_cache();
+        $cache_cleared = $this->clear_all_user_cache();
+        error_log("Spam Detective: Added domain '{$domain}' to whitelist, cache cleared: " . ($cache_cleared ? 'yes' : 'no'));
       }
     } elseif ($action_type === 'remove') {
+      $original_count = count($whitelist);
       $whitelist = array_filter($whitelist, function ($d) use ($domain) {
         return $d !== $domain;
       });
-      update_option('spam_detective_whitelist', array_values($whitelist));
 
-      // Clear cache when whitelist changes
-      $this->clear_all_user_cache();
+      // Only clear cache if domain was actually removed
+      if (count($whitelist) < $original_count) {
+        update_option('spam_detective_whitelist', array_values($whitelist));
+        $cache_cleared = $this->clear_all_user_cache();
+        error_log("Spam Detective: Removed domain '{$domain}' from whitelist, cache cleared: " . ($cache_cleared ? 'yes' : 'no'));
+      } else {
+        error_log("Spam Detective: Domain '{$domain}' was not in whitelist, no changes made");
+      }
     }
 
-    wp_send_json_success();
+    wp_send_json_success([
+      'cache_cleared' => $cache_cleared,
+      'message' => $cache_cleared ? 'Domain updated and cache cleared' : 'Domain updated'
+    ]);
   }
 
   public function ajax_manage_suspicious_domains()
@@ -694,6 +709,7 @@ class SpamDetective_Analyzer
 
     $suspicious_domains = get_option('spam_detective_suspicious_domains', []);
     $suspicious_domains = array_map('strtolower', $suspicious_domains); // Convert existing to lowercase
+    $cache_cleared = false;
 
     if ($action_type === 'add') {
       if (!in_array($domain, $suspicious_domains)) {
@@ -701,19 +717,29 @@ class SpamDetective_Analyzer
         update_option('spam_detective_suspicious_domains', $suspicious_domains);
 
         // Clear cache when suspicious domains change
-        $this->clear_all_user_cache();
+        $cache_cleared = $this->clear_all_user_cache();
+        error_log("Spam Detective: Added domain '{$domain}' to suspicious list, cache cleared: " . ($cache_cleared ? 'yes' : 'no'));
       }
     } elseif ($action_type === 'remove') {
+      $original_count = count($suspicious_domains);
       $suspicious_domains = array_filter($suspicious_domains, function ($d) use ($domain) {
         return $d !== $domain;
       });
-      update_option('spam_detective_suspicious_domains', array_values($suspicious_domains));
 
-      // Clear cache when suspicious domains change
-      $this->clear_all_user_cache();
+      // Only clear cache if domain was actually removed
+      if (count($suspicious_domains) < $original_count) {
+        update_option('spam_detective_suspicious_domains', array_values($suspicious_domains));
+        $cache_cleared = $this->clear_all_user_cache();
+        error_log("Spam Detective: Removed domain '{$domain}' from suspicious list, cache cleared: " . ($cache_cleared ? 'yes' : 'no'));
+      } else {
+        error_log("Spam Detective: Domain '{$domain}' was not in suspicious list, no changes made");
+      }
     }
 
-    wp_send_json_success();
+    wp_send_json_success([
+      'cache_cleared' => $cache_cleared,
+      'message' => $cache_cleared ? 'Domain updated and cache cleared' : 'Domain updated'
+    ]);
   }
 
   /**
@@ -751,10 +777,19 @@ class SpamDetective_Analyzer
   {
     global $wpdb;
 
-    $wpdb->query(
+    // Use the broader pattern to catch all spam detective transients
+    $deleted = $wpdb->query(
       "DELETE FROM {$wpdb->options} 
-       WHERE option_name LIKE '_transient_spam_detective_user_%' 
-       OR option_name LIKE '_transient_timeout_spam_detective_user_%'"
+       WHERE option_name LIKE '_transient_spam_detective_%' 
+       OR option_name LIKE '_transient_timeout_spam_detective_%'"
     );
+
+    // Also clear object cache if available
+    if (function_exists('wp_cache_flush_group')) {
+      wp_cache_flush_group('spam_detective');
+    }
+
+    // Return whether cache was actually cleared
+    return $deleted > 0;
   }
 }
