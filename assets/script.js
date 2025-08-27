@@ -75,6 +75,57 @@ jQuery(document).ready(function($) {
         }, 200);
     }
     
+    function generateRiskFactorTags(reasons) {
+        if (!reasons || reasons.length === 0) {
+            return '<em>No factors detected</em>';
+        }
+        
+        // Define high priority risk factors
+        const highPriorityFactors = [
+            'Known spam domain',
+            'No display name', 
+            'Suspicious username pattern (multiple dots)',
+            'Mass registration burst',
+            'Bulk registration'
+        ];
+        
+        // Define medium priority risk factors  
+        const mediumPriorityFactors = [
+            'Suspicious username pattern',
+            'Random username',
+            'Generic email pattern',
+            'Suspicious domain extension',
+            'Common spam username pattern',
+            'Fake name used',
+            'Sequential username pattern'
+        ];
+        
+        let tags = '';
+        reasons.forEach(reason => {
+            let tagClass = 'risk-factor-tag';
+            
+            // Check if this reason matches high priority patterns
+            const isHighPriority = highPriorityFactors.some(pattern => 
+                reason.toLowerCase().includes(pattern.toLowerCase())
+            );
+            
+            // Check if this reason matches medium priority patterns
+            const isMediumPriority = mediumPriorityFactors.some(pattern => 
+                reason.toLowerCase().includes(pattern.toLowerCase())
+            );
+            
+            if (isHighPriority) {
+                tagClass += ' high-priority';
+            } else if (isMediumPriority) {
+                tagClass += ' medium-priority';
+            }
+            
+            tags += `<span class="${tagClass}" title="${escapeHtml(reason)}">${escapeHtml(reason)}</span> `;
+        });
+        
+        return tags;
+    }
+    
     function displayResults() {
         const highConfidence = suspiciousUsers.filter(u => u.risk_level === 'high').length;
         const suspiciousDomains = new Set(suspiciousUsers.map(u => u.email.split('@')[1])).size;
@@ -92,6 +143,7 @@ jQuery(document).ready(function($) {
             const emailDomain = user.email.split('@')[1];
             const statusIcon = getStatusIcon(user);
             const statusClass = getStatusClass(user);
+            const riskFactorTags = generateRiskFactorTags(user.reasons);
             
             html += `
                 <tr data-user-id="${user.id}" class="${statusClass}">
@@ -102,7 +154,7 @@ jQuery(document).ready(function($) {
                     <td>${escapeHtml(user.email)}</td>
                     <td>${user.display_name ? escapeHtml(user.display_name) : '<em>None</em>'}</td>
                     <td>${user.registered}</td>
-                    <td class="risk-factors">${user.reasons.join(', ')}</td>
+                    <td class="risk-factors">${riskFactorTags}</td>
                     <td>
                         <button class="button button-small delete-single" data-user-id="${user.id}" ${!user.can_delete ? 'disabled' : ''}>Delete</button>
                         <button class="button button-small whitelist-domain" data-domain="${emailDomain}">Whitelist Domain</button>

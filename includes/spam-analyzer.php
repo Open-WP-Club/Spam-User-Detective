@@ -103,6 +103,27 @@ class SpamDetective_Analyzer
       }
     }
 
+    // Sort users by risk level (high -> medium -> low) and then by registration date (newest first)
+    usort($suspicious_users, function ($a, $b) {
+      // Define risk level priority (higher number = higher priority)
+      $risk_priority = [
+        'high' => 3,
+        'medium' => 2,
+        'low' => 1
+      ];
+
+      $a_priority = $risk_priority[$a['risk_level']] ?? 0;
+      $b_priority = $risk_priority[$b['risk_level']] ?? 0;
+
+      // First sort by risk level (descending - high risk first)
+      if ($a_priority !== $b_priority) {
+        return $b_priority - $a_priority;
+      }
+
+      // If same risk level, sort by registration date (newest first)
+      return strcmp($b['registered'], $a['registered']);
+    });
+
     wp_send_json_success([
       'users' => $suspicious_users,
       'total_analyzed' => count($users)

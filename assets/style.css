@@ -200,6 +200,19 @@
   color: #dba617;
 }
 
+/* Make status column compact */
+.wp-list-table th:nth-child(2),
+.wp-list-table td:nth-child(2) {
+  width: 60px;
+  max-width: 60px;
+  text-align: center;
+  padding: 8px 4px;
+}
+
+.wp-list-table td:nth-child(2) .status-icon {
+  margin-right: 0;
+}
+
 /* User Row Styling */
 .protected-user {
   background-color: #f0f6fc !important;
@@ -243,9 +256,46 @@
 }
 
 .risk-factors {
+  max-width: 300px;
+  line-height: 1.4;
+}
+
+.risk-factor-tag {
+  display: inline-block;
+  padding: 3px 6px;
+  margin: 1px 2px;
+  border-radius: 3px;
   font-size: 11px;
-  color: #666;
-  max-width: 200px;
+  font-weight: 500;
+  background: #f1f3f4;
+  border: 1px solid #dadce0;
+  color: #5f6368;
+  white-space: nowrap;
+}
+
+.risk-factor-tag.high-priority {
+  background: #fce8e6;
+  border-color: #f28b82;
+  color: #d93025;
+}
+
+.risk-factor-tag.medium-priority {
+  background: #fef7e0;
+  border-color: #fbbc04;
+  color: #ea8600;
+}
+
+/* Make risk factors more compact on smaller screens */
+@media (max-width: 1200px) {
+  .risk-factors {
+    max-width: 250px;
+  }
+
+  .risk-factor-tag {
+    font-size: 10px;
+    padding: 2px 4px;
+    margin: 1px;
+  }
 }
 
 /* Settings Sections */
