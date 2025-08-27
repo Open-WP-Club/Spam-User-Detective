@@ -35,6 +35,7 @@ class SpamDetective_Analyzer
     add_action('wp_ajax_export_domain_lists', [$this, 'ajax_export_domain_lists']);
     add_action('wp_ajax_import_domain_lists', [$this, 'ajax_import_domain_lists']);
     add_action('wp_ajax_get_domain_list', [$this, 'ajax_get_domain_list']);
+    add_action('wp_ajax_reanalyze_users', [$this, 'ajax_reanalyze_users']);
   }
 
   public function ajax_analyze_spam_users()
@@ -127,6 +128,111 @@ class SpamDetective_Analyzer
     wp_send_json_success([
       'users' => $suspicious_users,
       'total_analyzed' => count($users)
+    ]);
+  }
+
+  /**
+   * Re-analyze specific users after domain changes
+   */
+  public function ajax_reanalyze_users()
+  {
+    check_ajax_referer('spam_detective_nonce', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+      wp_die('Insufficient permissions');
+    }
+
+    $user_ids = $_POST['user_ids'] ?? [];
+
+    if (empty($user_ids)) {
+      wp_send_json_error('No users provided for re-analysis');
+    }
+
+    $whitelist = get_option('spam_detective_whitelist', []);
+    $suspicious_domains = get_option('spam_detective_suspicious_domains', []);
+
+    $still_suspicious = [];
+    $removed_count = 0;
+
+    foreach ($user_ids as $user_id) {
+      $user = get_user_by('ID', $user_id);
+      if (!$user) {
+        continue;
+      }
+
+      // Skip protected users (they shouldn't be in the list anyway)
+      if ($this->is_protected_user($user)) {
+        continue;
+      }
+
+      // Skip users with fulfilled WooCommerce orders completely
+      if ($this->has_fulfilled_woocommerce_orders($user->ID)) {
+        continue;
+      }
+
+      // Check if email domain is whitelisted - skip completely if it is
+      $email_domain = explode('@', $user->user_email)[1] ?? '';
+      if (in_array(strtolower($email_domain), array_map('strtolower', $whitelist))) {
+        $removed_count++;
+        continue;
+      }
+
+      // Re-analyze the user with current domain lists (no cache)
+      $analysis = $this->analyze_user($user, $whitelist, $suspicious_domains);
+
+      if ($analysis['is_suspicious']) {
+        $still_suspicious[] = [
+          'id' => $user->ID,
+          'username' => $user->user_login,
+          'email' => $user->user_email,
+          'display_name' => $user->display_name,
+          'registered' => $user->user_registered,
+          'risk_level' => $analysis['risk_level'],
+          'reasons' => $analysis['reasons'],
+          'can_delete' => $this->can_delete_user($user),
+          'has_orders' => $this->has_woocommerce_orders($user->ID),
+          'roles' => $this->get_user_roles($user)
+        ];
+
+        // Update cache with new analysis
+        $cache_key = 'spam_detective_user_' . $user->ID . '_' . md5($user->user_registered . $user->user_email);
+        set_transient($cache_key, $analysis, 24 * HOUR_IN_SECONDS);
+      } else {
+        // User is no longer suspicious
+        $removed_count++;
+
+        // Clear old cache
+        $this->clear_user_cache($user->ID);
+      }
+    }
+
+    // Sort users by risk level (high -> medium -> low) and then by registration date (newest first)
+    usort($still_suspicious, function ($a, $b) {
+      // Define risk level priority (higher number = higher priority)
+      $risk_priority = [
+        'high' => 3,
+        'medium' => 2,
+        'low' => 1
+      ];
+
+      $a_priority = $risk_priority[$a['risk_level']] ?? 0;
+      $b_priority = $risk_priority[$b['risk_level']] ?? 0;
+
+      // First sort by risk level (descending - high risk first)
+      if ($a_priority !== $b_priority) {
+        return $b_priority - $a_priority;
+      }
+
+      // If same risk level, sort by registration date (newest first)
+      return strcmp($b['registered'], $a['registered']);
+    });
+
+    error_log("Spam Detective: Re-analyzed " . count($user_ids) . " users. " . count($still_suspicious) . " still suspicious, {$removed_count} removed from list.");
+
+    wp_send_json_success([
+      'users' => $still_suspicious,
+      'removed_count' => $removed_count,
+      'total_reanalyzed' => count($user_ids)
     ]);
   }
 

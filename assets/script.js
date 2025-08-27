@@ -163,6 +163,10 @@ jQuery(document).ready(function($) {
             `;
         });
         $('#suspicious-users-list').html(html);
+        
+        // Reset selections when results change
+        selectedUsers = [];
+        $('#select-all-checkbox').prop('checked', false).prop('indeterminate', false);
         updateSelectedCount();
     }
     
@@ -500,6 +504,12 @@ jQuery(document).ready(function($) {
                             refreshDomainSection(listType);
                         }, 500);
                     }
+                    
+                    // Auto re-analyze if we have suspicious users displayed and cache was cleared
+                    if (response.data && response.data.cache_cleared && suspiciousUsers.length > 0) {
+                        console.log('Cache was cleared, triggering auto re-analysis...');
+                        autoReAnalyze(domain, listType, actionType);
+                    }
                 } else {
                     // Restore opacity on error
                     if ($domainElement) {
@@ -663,4 +673,138 @@ jQuery(document).ready(function($) {
             $('#add-suspicious').click();
         }
     });
+    
+    /**
+     * Auto re-analyze current suspicious users after domain changes
+     */
+    function autoReAnalyze(changedDomain, listType, actionType) {
+        if (suspiciousUsers.length === 0) {
+            console.log('No suspicious users to re-analyze');
+            return;
+        }
+        
+        console.log(`Auto re-analyzing ${suspiciousUsers.length} users after ${actionType}ing ${changedDomain} to ${listType}`);
+        
+        // Show loading state
+        showReAnalysisProgress(`Re-analyzing users after ${actionType === 'add' ? 'adding' : 'removing'} domain...`);
+        
+        // Get current user IDs
+        const userIds = suspiciousUsers.map(user => user.id);
+        
+        $.ajax({
+            url: spamDetective.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'reanalyze_users',
+                user_ids: userIds,
+                nonce: spamDetective.nonce
+            },
+            success: function(response) {
+                hideReAnalysisProgress();
+                
+                if (response.success) {
+                    const updatedUsers = response.data.users;
+                    const removedCount = response.data.removed_count || 0;
+                    
+                    console.log(`Re-analysis complete. ${updatedUsers.length} users still suspicious, ${removedCount} users removed from list`);
+                    
+                    // Update the suspicious users array
+                    suspiciousUsers = updatedUsers;
+                    
+                    // Re-display results with updated data
+                    displayResults();
+                    
+                    // Show feedback message
+                    if (removedCount > 0) {
+                        showTemporaryMessage(`Re-analysis complete! ${removedCount} user(s) are no longer flagged as suspicious due to the domain change.`, 'success');
+                    } else {
+                        showTemporaryMessage('Re-analysis complete! All users remain flagged as suspicious.', 'info');
+                    }
+                } else {
+                    console.error('Re-analysis failed:', response.data);
+                    showTemporaryMessage('Re-analysis failed: ' + response.data, 'error');
+                }
+            },
+            error: function(xhr, status, error) {
+                hideReAnalysisProgress();
+                console.error('Re-analysis AJAX error:', {xhr: xhr, status: status, error: error});
+                showTemporaryMessage('Re-analysis failed. Please manually refresh the analysis.', 'error');
+            }
+        });
+    }
+    
+    /**
+     * Show re-analysis progress indicator
+     */
+    function showReAnalysisProgress(message) {
+        // Create or update progress indicator
+        let $indicator = $('#reanalysis-progress');
+        if ($indicator.length === 0) {
+            $indicator = $('<div id="reanalysis-progress" class="reanalysis-progress"><p></p><div class="progress-bar"><div class="progress-fill"></div></div></div>');
+            $('#results-container h2').after($indicator);
+        }
+        
+        $indicator.find('p').text(message);
+        $indicator.show();
+        
+        // Animate progress bar
+        $indicator.find('.progress-fill').css('width', '0%');
+        let progress = 0;
+        const interval = setInterval(() => {
+            progress += Math.random() * 10;
+            if (progress > 90) progress = 90;
+            $indicator.find('.progress-fill').css('width', progress + '%');
+            if (progress >= 90) {
+                clearInterval(interval);
+            }
+        }, 100);
+        
+        // Store interval ID for cleanup
+        $indicator.data('interval', interval);
+    }
+    
+    /**
+     * Hide re-analysis progress indicator
+     */
+    function hideReAnalysisProgress() {
+        const $indicator = $('#reanalysis-progress');
+        if ($indicator.length > 0) {
+            // Clear animation interval
+            const interval = $indicator.data('interval');
+            if (interval) {
+                clearInterval(interval);
+            }
+            
+            // Complete the progress bar then hide
+            $indicator.find('.progress-fill').css('width', '100%');
+            setTimeout(() => {
+                $indicator.fadeOut(300);
+            }, 500);
+        }
+    }
+    
+    /**
+     * Show temporary message to user
+     */
+    function showTemporaryMessage(message, type = 'info') {
+        const $container = $('#results-container');
+        if ($container.length === 0) return;
+        
+        const $message = $(`<div class="temporary-message ${type}"><p>${escapeHtml(message)}</p></div>`);
+        $container.prepend($message);
+        
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+            $message.fadeOut(300, function() {
+                $(this).remove();
+            });
+        }, 5000);
+        
+        // Allow manual dismissal
+        $message.click(function() {
+            $(this).fadeOut(300, function() {
+                $(this).remove();
+            });
+        });
+    }
 });

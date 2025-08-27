@@ -92,6 +92,77 @@
   width: 0%;
 }
 
+/* Re-analysis Progress Indicator */
+.reanalysis-progress {
+  padding: 10px 15px;
+  margin: 15px 0;
+  background: #f8f9fa;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  border-left: 4px solid #0073aa;
+}
+
+.reanalysis-progress p {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #0073aa;
+}
+
+.reanalysis-progress .progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #f0f0f1;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0;
+}
+
+.reanalysis-progress .progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0073aa, #005a87);
+  transition: width 0.2s ease;
+  width: 0%;
+}
+
+/* Temporary Messages */
+.temporary-message {
+  padding: 12px 15px;
+  margin: 15px 0;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: opacity 0.3s ease;
+  border-left: 4px solid;
+}
+
+.temporary-message:hover {
+  opacity: 0.8;
+}
+
+.temporary-message p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.temporary-message.success {
+  background: #e8f5e8;
+  border-left-color: #4caf50;
+  color: #2e7d32;
+}
+
+.temporary-message.info {
+  background: #e3f2fd;
+  border-left-color: #2196f3;
+  color: #1565c0;
+}
+
+.temporary-message.error {
+  background: #ffebee;
+  border-left-color: #f44336;
+  color: #c62828;
+}
+
 /* Analysis Summary */
 .analysis-summary {
   display: flex;
