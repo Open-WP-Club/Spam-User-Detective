@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Spam Detection Analyzer Class
+ * Spam Detection Analyzer Class - Improved WooCommerce Integration
  * 
  * File: includes/spam-analyzer.php
  */
@@ -59,20 +59,30 @@ class SpamDetective_Analyzer
     $whitelist = get_option('spam_detective_whitelist', []);
     $suspicious_domains = get_option('spam_detective_suspicious_domains', []);
 
+    $skipped_users = [
+      'protected_roles' => 0,
+      'has_orders' => 0,
+      'whitelisted' => 0
+    ];
+
     foreach ($users as $user) {
       // Skip protected roles
       if ($this->is_protected_user($user)) {
+        $skipped_users['protected_roles']++;
         continue;
       }
 
-      // Skip users with fulfilled WooCommerce orders completely
-      if ($this->has_fulfilled_woocommerce_orders($user->ID)) {
+      // Skip users with any meaningful WooCommerce orders completely
+      if ($this->has_meaningful_woocommerce_orders($user->ID)) {
+        $skipped_users['has_orders']++;
+        error_log("Spam Detective: Skipping user {$user->user_login} (ID: {$user->ID}) - has meaningful WooCommerce orders");
         continue;
       }
 
       // Check if email domain is whitelisted - skip completely if it is
       $email_domain = explode('@', $user->user_email)[1] ?? '';
       if (in_array(strtolower($email_domain), array_map('strtolower', $whitelist))) {
+        $skipped_users['whitelisted']++;
         continue;
       }
 
@@ -125,9 +135,16 @@ class SpamDetective_Analyzer
       return strcmp($b['registered'], $a['registered']);
     });
 
+    // Log analysis summary
+    error_log("Spam Detective: Analysis complete - Found " . count($suspicious_users) . " suspicious users. Skipped: " .
+      "{$skipped_users['protected_roles']} protected roles, " .
+      "{$skipped_users['has_orders']} with orders, " .
+      "{$skipped_users['whitelisted']} whitelisted domains");
+
     wp_send_json_success([
       'users' => $suspicious_users,
-      'total_analyzed' => count($users)
+      'total_analyzed' => count($users),
+      'skipped' => $skipped_users
     ]);
   }
 
@@ -165,8 +182,10 @@ class SpamDetective_Analyzer
         continue;
       }
 
-      // Skip users with fulfilled WooCommerce orders completely
-      if ($this->has_fulfilled_woocommerce_orders($user->ID)) {
+      // Skip users with meaningful WooCommerce orders completely
+      if ($this->has_meaningful_woocommerce_orders($user->ID)) {
+        $removed_count++;
+        error_log("Spam Detective: Removing user {$user->user_login} (ID: {$user->ID}) from suspicious list - has meaningful WooCommerce orders");
         continue;
       }
 
@@ -469,8 +488,6 @@ class SpamDetective_Analyzer
       }
     }
 
-    // Note: WooCommerce checks are now handled in the main loop to completely exclude users
-
     // Determine risk level
     $risk_level = 'low';
     if ($risk_score >= 70) {
@@ -488,21 +505,51 @@ class SpamDetective_Analyzer
   }
 
   /**
-   * Check if user has fulfilled WooCommerce orders
+   * Enhanced method to check if user has meaningful WooCommerce orders
+   * This includes completed, processing, and on-hold orders (showing legitimate customer activity)
    */
-  private function has_fulfilled_woocommerce_orders($user_id)
+  private function has_meaningful_woocommerce_orders($user_id)
   {
     if (!class_exists('WooCommerce')) {
       return false;
     }
 
+    // Check cache first for performance
+    $cache_key = 'spam_detective_orders_' . $user_id;
+    $cached_result = get_transient($cache_key);
+    if ($cached_result !== false) {
+      return $cached_result;
+    }
+
+    // Check for orders that indicate legitimate customer activity
+    $meaningful_statuses = ['completed', 'processing', 'on-hold'];
+
     $orders = wc_get_orders([
       'customer_id' => $user_id,
       'limit' => 1,
-      'status' => ['completed'] // Only check for completed/fulfilled orders
+      'status' => $meaningful_statuses,
+      'return' => 'ids' // Only return IDs for performance
     ]);
 
-    return !empty($orders);
+    $has_orders = !empty($orders);
+
+    // Cache result for 1 hour
+    set_transient($cache_key, $has_orders, HOUR_IN_SECONDS);
+
+    if ($has_orders) {
+      error_log("Spam Detective: User {$user_id} has meaningful WooCommerce orders, excluding from spam analysis");
+    }
+
+    return $has_orders;
+  }
+
+  /**
+   * Legacy method - kept for backward compatibility but now calls the enhanced method
+   * @deprecated Use has_meaningful_woocommerce_orders() instead
+   */
+  private function has_fulfilled_woocommerce_orders($user_id)
+  {
+    return $this->has_meaningful_woocommerce_orders($user_id);
   }
 
   /**
@@ -532,7 +579,7 @@ class SpamDetective_Analyzer
   }
 
   /**
-   * Check if user has WooCommerce orders (any status)
+   * Check if user has WooCommerce orders (any status) - used for display purposes
    */
   private function has_woocommerce_orders($user_id)
   {
@@ -543,7 +590,8 @@ class SpamDetective_Analyzer
     $orders = wc_get_orders([
       'customer_id' => $user_id,
       'limit' => 1,
-      'status' => ['completed', 'processing', 'on-hold']
+      'status' => ['completed', 'processing', 'on-hold'],
+      'return' => 'ids'
     ]);
 
     return !empty($orders);
@@ -558,6 +606,10 @@ class SpamDetective_Analyzer
     if ($user) {
       $cache_key = 'spam_detective_user_' . $user_id . '_' . md5($user->user_registered . $user->user_email);
       delete_transient($cache_key);
+
+      // Also clear order cache
+      $order_cache_key = 'spam_detective_orders_' . $user_id;
+      delete_transient($order_cache_key);
     }
   }
 
@@ -615,14 +667,16 @@ class SpamDetective_Analyzer
 
       // Additional check for WooCommerce orders if force delete not enabled
       $force_delete = isset($_POST['force_delete']) && $_POST['force_delete'];
-      if (!$force_delete && $this->has_woocommerce_orders($user_id)) {
+      if (!$force_delete && $this->has_meaningful_woocommerce_orders($user_id)) {
         $skipped++;
+        error_log("Spam Detective: Skipping deletion of user {$user->user_login} (ID: {$user_id}) - has meaningful WooCommerce orders");
         continue;
       }
 
       if (wp_delete_user($user_id)) {
         $this->clear_user_cache($user_id);
         $deleted++;
+        error_log("Spam Detective: Deleted user {$user->user_login} (ID: {$user_id})");
       }
     }
 
@@ -671,7 +725,7 @@ class SpamDetective_Analyzer
         $analysis['risk_level'],
         implode('; ', $analysis['reasons']),
         implode(', ', $this->get_user_roles($user)),
-        $this->has_woocommerce_orders($user->ID) ? 'Yes' : 'No',
+        $this->has_meaningful_woocommerce_orders($user->ID) ? 'Yes' : 'No',
         $this->can_delete_user($user) ? 'Yes' : 'No'
       ];
     }
